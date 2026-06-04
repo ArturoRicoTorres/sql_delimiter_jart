@@ -1,0 +1,16 @@
+{
+    "unparsable_queries": [
+        {
+            "query": "try set @msg_message = 'Start session for table '+ @TableName",
+            "error": "Invalid expression / Unexpected token. Line 1, Col: 9.\n  try set \u001b[4m@\u001b[0mmsg_message = 'Start session for table '+ @TableName"
+        },
+        {
+            "query": "insert into #files ( FileName , Depth , IsFile ) exec xp_dirTree 'D:\\Baseline\\NWB\\ExportFiles\\Clientportal\\Letters_XML\\Logs',1,1 select @file = max(FileName) from #files where IsFile = 1 and FileName like 'UploadList%'",
+            "error": "Invalid expression / Unexpected token. Line 1, Col: 53.\n  insert into #files ( FileName , Depth , IsFile ) \u001b[4mexec\u001b[0m xp_dirTree 'D:\\Baseline\\NWB\\ExportFiles\\Clientportal\\Letters_XML\\Logs',1,1 select @file = max(FileN"
+        },
+        {
+            "query": "drop table if exists #uploadlist create table #uploadlist ( fileName nvarchar(255) )",
+            "error": "Invalid expression / Unexpected token. Line 1, Col: 39.\n  drop table if exists #uploadlist \u001b[4mcreate\u001b[0m table #uploadlist ( fileName nvarchar(255) )"
+        }
+    ]
+}

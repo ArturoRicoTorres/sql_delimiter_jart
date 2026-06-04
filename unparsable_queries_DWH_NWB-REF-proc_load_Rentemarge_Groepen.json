@@ -1,0 +1,11 @@
+{
+    "unparsable_queries": [
+        {
+            "query": "exec @return = utils.audit.logError @exn_id",
+            "error": "Required keyword: 'this' missing for <class 'sqlglot.expressions.core.EQ'>. Line 1, Col: 37.\n  exec @return = utils.audit.logError \u001b[4m@\u001b[0mexn_id",
+            "branch_id": "trycatch_0.catch",
+            "branch_side": "catch",
+            "branch_condition_sql": null
+        }
+    ]
+}
