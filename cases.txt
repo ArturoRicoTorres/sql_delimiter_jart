@@ -1,0 +1,8 @@
+try set x
+insert into x exec x select x from x where x and x like x
+drop table if exists x create table x
+select x
+drop table if exists x into x from 
+drop table if exists x select x into x from x where x like x
+select x from x as x where x group by x union all
+drop table if exists x into x from x where x and x group by x, x
