@@ -1,0 +1,80 @@
+STMT_KEYWORDS = {
+    "select", "insert", "update", "delete", "merge", "drop", "create",
+    "alter", "truncate", "declare", "set", "with", "while", "if", "begin",
+    "print", "waitfor", "grant", "revoke", "use", "open", "close", "fetch",
+    "return", "goto", "throw", "commit", "rollback", "save", "backup",
+    "restore", "bulk",
+}
+
+def _strip(sql):
+    sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)   # block comments
+    sql = re.sub(r"--[^\n]*", " ", sql)                      # line comments
+    sql = re.sub(r"'(?:[^']|'')*'", " ", sql)                # string literals
+    sql = re.sub(r"\[[^\]]*\]", " ", sql)                    # [bracketed] names
+    return sql
+
+def is_pure_exec(query):
+    """True only if the query is one or more exec statements and nothing else."""
+    s = _strip(query or "")
+    if not re.match(r"^\s*exec(ute)?\b", s, re.IGNORECASE):
+        return False
+    for tok in re.findall(r"(?<![@#$\w])([A-Za-z_]+)", s):
+        if tok.lower() in STMT_KEYWORDS:
+            return False
+    return True
+
+#2 chunk
+def classify_zip(zip_path):
+    rows = []
+    with zipfile.ZipFile(zip_path) as zf:
+        names = sorted(n for n in zf.namelist()
+                       if n.lower().endswith(".json") and not n.endswith("/"))
+        for name in names:
+            row = {"file": Path(name).name}
+            try:
+                data = json.loads(zf.read(name).decode("utf-8"))
+                texts = [q.get("query", "") for q in data.get("unparsable_queries", [])]
+                impure = [t for t in texts if not is_pure_exec(t)]
+                if not texts:
+                    verdict = "No unparsable queries"
+                elif impure:
+                    verdict = "Needs manual review"
+                else:
+                    verdict = "No manual review"
+                row.update(verdict=verdict, num_queries=len(texts),
+                           num_pure_exec=len(texts) - len(impure), num_review=len(impure))
+            except Exception as e:
+                row.update(verdict="Parse error", num_queries=None,
+                           num_pure_exec=None, num_review=None)
+                row["error"] = f"{type(e).__name__}: {e}"
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+def extract_review_queries(zip_path):
+    rows = []
+    with zipfile.ZipFile(zip_path) as zf:
+        names = sorted(n for n in zf.namelist()
+                       if n.lower().endswith(".json") and not n.endswith("/"))
+        for name in names:
+            try:
+                data = json.loads(zf.read(name).decode("utf-8"))
+            except Exception:
+                continue
+            for i, qd in enumerate(data.get("unparsable_queries", [])):
+                text = qd.get("query", "")
+                if not is_pure_exec(text):
+                    rows.append({
+                        "file": Path(name).name,
+                        "query_index": i,
+                        "query": text,
+                        "error": qd.get("error", ""),
+                    })
+    return pd.DataFrame(rows, columns=["file", "query_index", "query", "error"])
+
+df = classify_zip(ZIP_PATH)
+display(df)
+print_report(df)   # still works; rename num_non_exec -> num_review in it if you kept that
+
+queries_df = extract_review_queries(ZIP_PATH)
+display(queries_df)
+queries_df.to_excel("review_queries.xlsx", index=False)
