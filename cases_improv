@@ -1,0 +1,75 @@
+Cases to improve:
+
+1) if statements are cut:
+
+First example:
+
+        -- only if dimensions need to be processed
+        if exists (select top 1 1 from #process as p where p.object_type = 'dimension');  /* [AUTOMATED DELIMITER] */
+        insert into #dimension
+        (
+            cdm_id
+          , cdb_id
+          , ssas_dimensionid
+          , table_schema
+          , table_name
+          , max_valid_start
+          , last_data_update
+          , load_dimension_ind
+        )
+        exec cub.proc_get_dimension @exn_id            = @exn_id
+                                  , @sen_id            = @sen_id
+                                  , @ssas_dimension_id = ''
+                                  , @db_name = @database;
+
+        drop table if exists #object;
+        select
+                objectid = [value]
+        into #object
+        from string_split(@object_name_list, ';');
+Second example (wrongly placed delimiters):
+if( @brieven_met_dagtekening = 'Alles'
+    or  @brieven_met_dagtekening = 'Met dagtekening');  /* [AUTOMATED DELIMITER] */
+    begin
+
+Third example:
+
+
+2) Work on if statements
+3) Apply End Try; and End Catch;
+4) Disrupting delimiter from misleading parameter naming:
+create procedure [rcn].[proc_load_qcup_last_year]
+    @exn_id        int
+  , @sen_id        int
+  , @ind_increment int  = 0
+  , @start         date = null
+  , @;  /* [AUTOMATED DELIMITER] */end           date = null
+as
+
+5) Cut Create procedure, with recompile separated:
+
+CREATE procedure [RPT].[proc_report_ecl_sensitivity]
+(
+  @ddt_surrkey int
+, @model       varchar(50) = 'BASE'
+);  /* [AUTOMATED DELIMITER] */
+with recompile
+as
+set nocount on;
+6) Delimiter missing at the end of update statements. There may be other types of update constructs (some without where)
+e.g. update... set... from... inner join... where...(; missing)
+7) missing delimiter:
+DROP TABLE IF EXISTS #tmp;  -- properly terminated
+
+SELECT col1, col2
+INTO #tmp
+FROM SomeTable
+
+-- rc data if present; otherwise fallback to customer data
+
+INSERT INTO OtherTable
+VALUES ('done');
+8) Missing delimiters inside if statements:
+if... select... (missing delimiter)... else... select (; properly placed delimiter)
+
+ 
