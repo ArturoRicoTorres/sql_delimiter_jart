@@ -1,0 +1,39 @@
+import os, glob, logging
+logging.getLogger("sqlglot").setLevel(logging.ERROR)
+import sql_delimiter_wtry as T
+
+SRC_DIR       = "extracted_files_all"               # folder with your .sql files. For 232 unparseabe: extracted_files
+CLEAN_DIR     = "delimited_clean_2"               # files that passed both checks
+REVIEW_DIR    = "review"                  # files that need a human look
+DIALECT       = "tsql"                    # "" for a non-T-SQL file
+MARKER        = "[AUTOMATED DELIMITER]"   # inner marker text
+TERMINATE_ALL = True                      # True = terminate every statement
+N             = None                      # process first N files; None = all
+
+os.makedirs(CLEAN_DIR, exist_ok=True)
+os.makedirs(REVIEW_DIR, exist_ok=True)
+files = sorted(glob.glob(os.path.join(SRC_DIR, "*.sql")))[:N]
+print(len(files), "files to process")
+
+summary = []
+for i, path in enumerate(files, 1):
+    sql = open(path, encoding="utf-8", errors="replace").read()
+
+    ins, _ = T.annotate(sql, DIALECT, terminate_all=TERMINATE_ALL)
+    pre  = T.review(sql, ins)                                  # operator-position check (pre-apply)
+    fixed = T.apply(sql, ins, annotate_marker=True, marker=MARKER)
+    post = T.check_commented_out(fixed, marker="-- " + MARKER, verbose=False)  # commented-out check (post-apply)
+
+    needs_review = bool(pre) or bool(post)
+    dest = REVIEW_DIR if needs_review else CLEAN_DIR
+    out_path = os.path.join(dest, os.path.basename(path))
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
+        f.write(fixed)
+
+    summary.append((os.path.basename(path), len(ins), len(pre), len(post), needs_review))
+    flag = "REVIEW" if needs_review else "ok"
+    print(f"[{i}/{len(files)}] {flag:6s}  +{len(ins):3d} delims  "
+          f"pre={len(pre)} post={len(post)}  -> {out_path}")
+
+n_review = sum(1 for *_ , r in summary if r)
+print(f"\nDone. {len(summary)-n_review} clean, {n_review} need review (in '{REVIEW_DIR}/').")
