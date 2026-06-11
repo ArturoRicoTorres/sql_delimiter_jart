@@ -18,12 +18,13 @@ print(len(files), "files to process")
 summary = []
 for i, path in enumerate(files, 1):
     sql = open(path, encoding="utf-8", errors="replace").read()
-    ins, _ = T.annotate(sql, DIALECT, terminate_all=TERMINATE_ALL)
-    pre  = T.review(sql, ins, verbose=False)          # CHANGED: silent in the loop
-    fixed = T.apply(sql, ins, annotate_marker=True, marker=MARKER)
-    # REMOVED the check_commented_out call: the /* */ marker can't comment out code
+    ins, _ = T.annotate(sql, DIALECT, terminate_all=TERMINATE_ALL, conservative=True)
+    pre    = T.review(sql, ins, verbose=False)
+    flags  = T.flagged_cuts(ins, sql, verbose=False)     # uncorroborated low-confidence spots
+    fixed  = T.apply(sql, ins, annotate_marker=True, marker=MARKER)   # skips flagged automatically
+    mid    = T.check_midline_cut(fixed, marker=MARKER, verbose=False)
 
-    needs_review = bool(pre)                           # CHANGED: triage on pre only
+    needs_review = bool(pre) or bool(flags) or bool(mid)
     dest = REVIEW_DIR if needs_review else CLEAN_DIR
     out_path = os.path.join(dest, os.path.basename(path))
     with open(out_path, "w", encoding="utf-8", newline="") as f:
