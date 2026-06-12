@@ -8,6 +8,7 @@ REVIEW_DIR    = "review"
 DIALECT       = "tsql"
 MARKER        = "[AUTOMATED DELIMITER]"
 TERMINATE_ALL = True
+CONSERVATIVE  = True
 N             = None
 
 os.makedirs(CLEAN_DIR, exist_ok=True)
@@ -15,24 +16,58 @@ os.makedirs(REVIEW_DIR, exist_ok=True)
 files = sorted(glob.glob(os.path.join(SRC_DIR, "*.sql")))[:N]
 print(len(files), "files to process")
 
+def write_report(report_path, base, pre, flags, mid):
+    """Human-readable list of every spot that sent this file to review."""
+    lines = [f"REVIEW REPORT for {base}", "=" * 50, ""]
+    if flags:
+        lines.append(f"[{len(flags)}] UNCORROBORATED low-confidence boundary "
+                     f"(suppressed, NOT cut - confirm if a ';' belongs here):")
+        for r in flags:
+            lines.append(f"   L{r['line']}:C{r['col']}  before {r['before_keyword']}")
+            lines.append(f"      {r['context']}")
+        lines.append("")
+    if pre:
+        lines.append(f"[{len(pre)}] DELIMITER AFTER AN OPERATOR "
+                     f"(a ';' WAS written here - likely wrong, check it):")
+        for r in pre:
+            lines.append(f"   L{r['line']}:C{r['col']}  before {r['before_keyword']} "
+                         f"(after '{r['prev_char']}')")
+            lines.append(f"      {r['context']}")
+        lines.append("")
+    if mid:
+        lines.append(f"[{len(mid)}] MID-LINE CUT "
+                     f"(a ';' splits a line with code on both sides - check it):")
+        for r in mid:
+            lines.append(f"   L{r['line']}:  code after ';' -> {r['after']!r}")
+            lines.append(f"      {r['full_line']}")
+        lines.append("")
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
 summary = []
 for i, path in enumerate(files, 1):
     sql = open(path, encoding="utf-8", errors="replace").read()
-    ins, _ = T.annotate(sql, DIALECT, terminate_all=TERMINATE_ALL, conservative=True)
-    pre    = T.review(sql, ins, verbose=False)
-    flags  = T.flagged_cuts(ins, sql, verbose=False)     # uncorroborated low-confidence spots
-    fixed  = T.apply(sql, ins, annotate_marker=True, marker=MARKER)   # skips flagged automatically
-    mid    = T.check_midline_cut(fixed, marker=MARKER, verbose=False)
+    ins, _ = T.annotate(sql, DIALECT, terminate_all=TERMINATE_ALL, conservative=CONSERVATIVE)
+    pre    = T.review(sql, ins, verbose=False)                 # ';' after an operator (applied, suspect)
+    flags  = T.flagged_cuts(ins, sql, verbose=False)           # low-confidence (suppressed, not cut)
+    fixed  = T.apply(sql, ins, annotate_marker=True, marker=MARKER)
+    mid    = T.check_midline_cut(fixed, marker=MARKER, verbose=False)  # ';' splits a line
 
     needs_review = bool(pre) or bool(flags) or bool(mid)
     dest = REVIEW_DIR if needs_review else CLEAN_DIR
-    out_path = os.path.join(dest, os.path.basename(path))
+    base = os.path.basename(path)
+    out_path = os.path.join(dest, base)
     with open(out_path, "w", encoding="utf-8", newline="") as f:
         f.write(fixed)
+    if needs_review:
+        write_report(out_path + ".review.txt", base, pre, flags, mid)
 
-    summary.append((os.path.basename(path), len(ins), len(pre), needs_review))
+    n_applied = sum(1 for x in ins if not x.flagged)
+    summary.append((base, n_applied, len(flags), len(pre), len(mid), needs_review))
     flag = "REVIEW" if needs_review else "ok"
-    print(f"[{i}/{len(files)}] {flag:6s}  +{len(ins):3d} delims  pre={len(pre)}  -> {out_path}")
+    print(f"[{i}/{len(files)}] {flag:6s}  +{n_applied:3d} delims  "
+          f"flagged={len(flags)} pre={len(pre)} mid={len(mid)}  -> {out_path}")
 
-n_review = sum(1 for *_ , r in summary if r)
+n_review = sum(1 for *_, r in summary if r)
 print(f"\nDone. {len(summary)-n_review} clean, {n_review} need review (in '{REVIEW_DIR}/').")
+print("Each reviewed file has a '<name>.review.txt' next to it listing the spots to check.")
