@@ -1,73 +1,87 @@
 import os, glob, logging
+import pandas as pd
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
 import sql_delimiter_wtry as T          # must be the UPDATED file content
 
 SRC_DIR       = "extracted_files_all"
-CLEAN_DIR     = "delimited_clean_2"
+CLEAN_DIR     = "delimited_clean"
 REVIEW_DIR    = "review"
+REPORT_PATH   = "delimiter_report.xlsx"
 DIALECT       = "tsql"
 MARKER        = "[AUTOMATED DELIMITER]"
 TERMINATE_ALL = True
-CONSERVATIVE  = True
-N             = None
+
+SEND_ALL_TO_CLEAN = True
+CONSERVATIVE      = False
+N                 = None
 
 os.makedirs(CLEAN_DIR, exist_ok=True)
 os.makedirs(REVIEW_DIR, exist_ok=True)
 files = sorted(glob.glob(os.path.join(SRC_DIR, "*.sql")))[:N]
 print(len(files), "files to process")
 
-def write_report(report_path, base, pre, flags, mid):
-    """Human-readable list of every spot that sent this file to review."""
-    lines = [f"REVIEW REPORT for {base}", "=" * 50, ""]
-    if flags:
-        lines.append(f"[{len(flags)}] UNCORROBORATED low-confidence boundary "
-                     f"(suppressed, NOT cut - confirm if a ';' belongs here):")
-        for r in flags:
-            lines.append(f"   L{r['line']}:C{r['col']}  before {r['before_keyword']}")
-            lines.append(f"      {r['context']}")
-        lines.append("")
-    if pre:
-        lines.append(f"[{len(pre)}] DELIMITER AFTER AN OPERATOR "
-                     f"(a ';' WAS written here - likely wrong, check it):")
-        for r in pre:
-            lines.append(f"   L{r['line']}:C{r['col']}  before {r['before_keyword']} "
-                         f"(after '{r['prev_char']}')")
-            lines.append(f"      {r['context']}")
-        lines.append("")
-    if mid:
-        lines.append(f"[{len(mid)}] MID-LINE CUT "
-                     f"(a ';' splits a line with code on both sides - check it):")
-        for r in mid:
-            lines.append(f"   L{r['line']}:  code after ';' -> {r['after']!r}")
-            lines.append(f"      {r['full_line']}")
-        lines.append("")
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-
-summary = []
+rows = []
 for i, path in enumerate(files, 1):
     sql = open(path, encoding="utf-8", errors="replace").read()
     ins, _ = T.annotate(sql, DIALECT, terminate_all=TERMINATE_ALL, conservative=CONSERVATIVE)
-    pre    = T.review(sql, ins, verbose=False)                 # ';' after an operator (applied, suspect)
-    flags  = T.flagged_cuts(ins, sql, verbose=False)           # low-confidence (suppressed, not cut)
+    pre    = T.review(sql, ins, verbose=False)
+    flags  = T.flagged_cuts(ins, sql, verbose=False)
     fixed  = T.apply(sql, ins, annotate_marker=True, marker=MARKER)
-    mid    = T.check_midline_cut(fixed, marker=MARKER, verbose=False)  # ';' splits a line
+    mid    = T.check_midline_cut(fixed, marker=MARKER, verbose=False)
 
     needs_review = bool(pre) or bool(flags) or bool(mid)
-    dest = REVIEW_DIR if needs_review else CLEAN_DIR
-    base = os.path.basename(path)
-    out_path = os.path.join(dest, base)
+    dest = CLEAN_DIR if SEND_ALL_TO_CLEAN else (REVIEW_DIR if needs_review else CLEAN_DIR)
+    out_path = os.path.join(dest, os.path.basename(path))
     with open(out_path, "w", encoding="utf-8", newline="") as f:
         f.write(fixed)
-    if needs_review:
-        write_report(out_path + ".review.txt", base, pre, flags, mid)
 
-    n_applied = sum(1 for x in ins if not x.flagged)
-    summary.append((base, n_applied, len(flags), len(pre), len(mid), needs_review))
-    flag = "REVIEW" if needs_review else "ok"
-    print(f"[{i}/{len(files)}] {flag:6s}  +{n_applied:3d} delims  "
-          f"flagged={len(flags)} pre={len(pre)} mid={len(mid)}  -> {out_path}")
+    total_lines = len(sql.splitlines())
+    code_lines  = sum(1 for ln in sql.splitlines() if ln.strip())
+    n_applied   = sum(1 for x in ins if not x.flagged)
+    density     = round(n_applied / code_lines * 100, 1) if code_lines else 0.0
 
-n_review = sum(1 for *_, r in summary if r)
-print(f"\nDone. {len(summary)-n_review} clean, {n_review} need review (in '{REVIEW_DIR}/').")
-print("Each reviewed file has a '<name>.review.txt' next to it listing the spots to check.")
+    rows.append({
+        "file": os.path.basename(path),
+        "total_lines": total_lines,
+        "code_lines": code_lines,
+        "delimiters_applied": n_applied,
+        "delims_per_100_code_lines": density,
+        "flagged_not_applied": len(flags),
+        "op_position_warnings": len(pre),
+        "midline_cut_warnings": len(mid),
+        "needs_review": needs_review,
+        "destination": dest,
+    })
+    print(f"[{i}/{len(files)}] +{n_applied:3d} delims  {code_lines:4d} code lines  "
+          f"({density:5.1f}/100)  -> {out_path}")
+
+# --- build the report ---
+df = pd.DataFrame(rows).sort_values("delims_per_100_code_lines", ascending=False)
+
+totals = {
+    "file": f"TOTAL ({len(df)} files)",
+    "total_lines": df["total_lines"].sum(),
+    "code_lines": df["code_lines"].sum(),
+    "delimiters_applied": df["delimiters_applied"].sum(),
+    "delims_per_100_code_lines": round(
+        df["delimiters_applied"].sum() / df["code_lines"].sum() * 100, 1
+    ) if df["code_lines"].sum() else 0.0,
+    "flagged_not_applied": df["flagged_not_applied"].sum(),
+    "op_position_warnings": df["op_position_warnings"].sum(),
+    "midline_cut_warnings": df["midline_cut_warnings"].sum(),
+    "needs_review": int(df["needs_review"].sum()),
+    "destination": "",
+}
+df_out = pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
+
+with pd.ExcelWriter(REPORT_PATH, engine="openpyxl") as xl:
+    df_out.to_excel(xl, index=False, sheet_name="delimiters")
+    ws = xl.sheets["delimiters"]
+    ws.freeze_panes = "A2"                                  # keep header visible
+    for col in ws.columns:                                  # rough auto-width
+        width = max(len(str(c.value)) if c.value is not None else 0 for c in col) + 2
+        ws.column_dimensions[col[0].column_letter].width = min(width, 40)
+
+print(f"\nReport written to '{REPORT_PATH}'  ({len(df)} files).")
+print(f"Total delimiters: {df['delimiters_applied'].sum()}  |  "
+      f"overall density: {totals['delims_per_100_code_lines']}/100 code lines")
