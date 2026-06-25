@@ -28,6 +28,8 @@ for i, path in enumerate(files, 1):
     flags  = T.flagged_cuts(ins, sql, verbose=False)
     fixed  = T.apply(sql, ins, annotate_marker=True, marker=MARKER)
     mid    = T.check_midline_cut(fixed, marker=MARKER, verbose=False)
+    NEEDLE        = "/* " + MARKER + " */"
+    automated_delims = fixed.count(NEEDLE)     # delimiters actually written by the tool
 
     needs_review = bool(pre) or bool(flags) or bool(mid)
     dest = CLEAN_DIR if SEND_ALL_TO_CLEAN else (REVIEW_DIR if needs_review else CLEAN_DIR)
@@ -37,14 +39,15 @@ for i, path in enumerate(files, 1):
 
     total_lines = len(sql.splitlines())
     code_lines  = sum(1 for ln in sql.splitlines() if ln.strip())
-    n_applied   = sum(1 for x in ins if not x.flagged)
-    density     = round(n_applied / code_lines * 100, 1) if code_lines else 0.0
+    density     = round(automated_delims / code_lines * 100, 1) if code_lines else 0.0
 
     rows.append({
         "file": os.path.basename(path),
         "total_lines": total_lines,
         "code_lines": code_lines,
-        "delimiters_applied": n_applied,
+        "automated_delimiters": automated_delims,        # marker-counted, ground truth
+        "boundaries_detected": sum(1 for x in ins if not x.flagged),
+        "preexisting_delims_skipped": sum(1 for x in ins if not x.flagged) - automated_delims,
         "delims_per_100_code_lines": density,
         "flagged_not_applied": len(flags),
         "op_position_warnings": len(pre),
