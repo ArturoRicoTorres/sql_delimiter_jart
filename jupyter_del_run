@@ -9,6 +9,7 @@ REVIEW_DIR    = "review"
 REPORT_PATH   = "delimiter_report.xlsx"
 DIALECT       = "tsql"
 MARKER        = "[AUTOMATED DELIMITER]"
+NEEDLE        = "/* " + MARKER + " */"        # the exact string apply() writes
 TERMINATE_ALL = True
 
 SEND_ALL_TO_CLEAN = True
@@ -28,8 +29,6 @@ for i, path in enumerate(files, 1):
     flags  = T.flagged_cuts(ins, sql, verbose=False)
     fixed  = T.apply(sql, ins, annotate_marker=True, marker=MARKER)
     mid    = T.check_midline_cut(fixed, marker=MARKER, verbose=False)
-    NEEDLE        = "/* " + MARKER + " */"
-    automated_delims = fixed.count(NEEDLE)     # delimiters actually written by the tool
 
     needs_review = bool(pre) or bool(flags) or bool(mid)
     dest = CLEAN_DIR if SEND_ALL_TO_CLEAN else (REVIEW_DIR if needs_review else CLEAN_DIR)
@@ -37,17 +36,20 @@ for i, path in enumerate(files, 1):
     with open(out_path, "w", encoding="utf-8", newline="") as f:
         f.write(fixed)
 
-    total_lines = len(sql.splitlines())
-    code_lines  = sum(1 for ln in sql.splitlines() if ln.strip())
-    density     = round(automated_delims / code_lines * 100, 1) if code_lines else 0.0
+    total_lines       = len(sql.splitlines())
+    code_lines        = sum(1 for ln in sql.splitlines() if ln.strip())
+    automated_delims  = fixed.count(NEEDLE)                       # actually written (ground truth)
+    boundaries        = sum(1 for x in ins if not x.flagged)      # detected boundaries
+    preexisting       = boundaries - automated_delims            # already had a ';', skipped
+    density           = round(automated_delims / code_lines * 100, 1) if code_lines else 0.0
 
     rows.append({
         "file": os.path.basename(path),
         "total_lines": total_lines,
         "code_lines": code_lines,
-        "automated_delimiters": automated_delims,        # marker-counted, ground truth
-        "boundaries_detected": sum(1 for x in ins if not x.flagged),
-        "preexisting_delims_skipped": sum(1 for x in ins if not x.flagged) - automated_delims,
+        "automated_delimiters": automated_delims,
+        "boundaries_detected": boundaries,
+        "preexisting_delims_skipped": preexisting,
         "delims_per_100_code_lines": density,
         "flagged_not_applied": len(flags),
         "op_position_warnings": len(pre),
@@ -55,7 +57,7 @@ for i, path in enumerate(files, 1):
         "needs_review": needs_review,
         "destination": dest,
     })
-    print(f"[{i}/{len(files)}] +{n_applied:3d} delims  {code_lines:4d} code lines  "
+    print(f"[{i}/{len(files)}] +{automated_delims:3d} delims  {code_lines:4d} code lines  "
           f"({density:5.1f}/100)  -> {out_path}")
 
 # --- build the report ---
@@ -65,9 +67,11 @@ totals = {
     "file": f"TOTAL ({len(df)} files)",
     "total_lines": df["total_lines"].sum(),
     "code_lines": df["code_lines"].sum(),
-    "delimiters_applied": df["delimiters_applied"].sum(),
+    "automated_delimiters": df["automated_delimiters"].sum(),
+    "boundaries_detected": df["boundaries_detected"].sum(),
+    "preexisting_delims_skipped": df["preexisting_delims_skipped"].sum(),
     "delims_per_100_code_lines": round(
-        df["delimiters_applied"].sum() / df["code_lines"].sum() * 100, 1
+        df["automated_delimiters"].sum() / df["code_lines"].sum() * 100, 1
     ) if df["code_lines"].sum() else 0.0,
     "flagged_not_applied": df["flagged_not_applied"].sum(),
     "op_position_warnings": df["op_position_warnings"].sum(),
@@ -86,5 +90,5 @@ with pd.ExcelWriter(REPORT_PATH, engine="openpyxl") as xl:
         ws.column_dimensions[col[0].column_letter].width = min(width, 40)
 
 print(f"\nReport written to '{REPORT_PATH}'  ({len(df)} files).")
-print(f"Total delimiters: {df['delimiters_applied'].sum()}  |  "
+print(f"Total automated delimiters: {df['automated_delimiters'].sum()}  |  "
       f"overall density: {totals['delims_per_100_code_lines']}/100 code lines")
